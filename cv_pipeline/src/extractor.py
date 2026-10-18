@@ -4,6 +4,76 @@ from matplotlib import image
 import numpy as np
 from typing import Literal, Any 
 import cv2
+import re
+import io
+from PIL import Image
+import base64
+
+DEFAULT_TITLE_PROMPT = "Read the book title from this image. Return only the title as plain text, with no author name, subtitle, or commentary.If no title is legible, return NONE."
+
+def parse_title(raw_text : str) -> str:
+    """ Normalizes a VLM's raw output into bare text.
+
+    Args:
+        raw_text (str): The raw vlm query response
+
+    Returns:
+        str: Normalized text with no <think> block , markdowns , prefixes or any stray quotations
+    """
+    
+    text = re.sub(r"<think>.*?</think>", "", raw_text or "", flags=re.DOTALL) # Drops the reasoning block if exists in the text
+    text = text.split("</think>")[-1].strip()                        # unclosed reasoning block
+    
+    if not text:
+        return ""
+    
+    text = text.splitlines()[0].replace("**", "").replace("`", "").strip()  # first line, no markdown
+    text = re.sub(r"^(book title|title)\s*[:\-]\s*", "", text, flags=re.I)  # "Title: ..." prefix
+    text = text.strip("_\"'“”‘’ ")                                          # stray quotes
+    
+    if text.upper().strip(" .") in {"NONE", "N/A", "NO TITLE"}:
+        return ""
+    
+    return text.strip()
+    
+def _resize_max_side(image : np.ndarray, max_side : int ) -> np.ndarray :
+    """ Resizes an image so its longest side matches max_side_length, maintaining the original aspect ratio.
+
+    Args:
+        image (np.ndarray): The image to resize.
+        max_side (int): The max value the image's height or width is allowed to have.
+
+    Returns:
+        np.ndarray: The resized image.
+    """
+    height, width = image[:2]
+    
+    if max(height, width) <= max_side : 
+        return image
+
+    #Determining the scaling ratio for the image 
+    if width > height: 
+        ratio = max_side/float(width)
+        new_width = max_side
+        new_height = int(ratio * height)
+        
+    else: 
+        ratio = max_side/float(height)
+        new_height = max_side
+        new_width = int(ratio * width)
+        
+    resized_img = cv2.resize(image, (new_height, new_width), interpolation= cv2.INTER_AREA)
+    
+    return resized_img
+
+def _to_url(image : np.ndarray) -> str:
+    """Encodes an RGB array as a PNG 'data URL' so it can travel inside the JSON body."""
+    
+    buffer = io.BytesIO()
+    Image.fromarray(image).save(buffer, format='PNG')
+    encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+    return f"data:image/png;base64,{encoded}"
+    
 
 @dataclass
 class ExtractionResult:
@@ -288,7 +358,20 @@ class TesseractExtractor(BaseTextExtractor):
             },
         )
 
+# The current design will only be implementing the following two vlms but if in future if I add more vlm extractors, a seprate 
+# BaseVLMExtractor class sould be created to store the duplicated functionalities cross them.
 
-class VLMExtractor(BaseTextExtractor):
-    pass
 
+class OpenAiVLMExtractor(BaseTextExtractor):
+    def __init__(self):
+        pass
+    
+    def extract(self, image : np.ndarray) -> ExtractionResult:
+        pass
+    
+class Qwen3VlMExtractor(BaseTextExtractor):
+    def __init__(self):
+        pass
+    
+    def extract(self, image : np.ndarray) -> ExtractionResult:
+        pass
