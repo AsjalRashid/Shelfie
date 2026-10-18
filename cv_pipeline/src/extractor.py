@@ -361,14 +361,77 @@ class TesseractExtractor(BaseTextExtractor):
 # The current design will only be implementing the following two vlms but if in future if I add more vlm extractors, a seprate 
 # BaseVLMExtractor class sould be created to store the duplicated functionalities cross them.
 
-
 class OpenAiVLMExtractor(BaseTextExtractor):
-    def __init__(self):
-        pass
+    name: str = "OpenaiVLM"
+
+    def __init__(self,
+                 model: str,
+                 base_url: str = "http://localhost:8000/v1",
+                 api_key_env: str | None = None,
+                 prompt: str = DEFAULT_TITLE_PROMPT,
+                 max_tokens: int = 256,
+                 temperature: float = 0.0,
+                 max_side: int = 1500,
+                 timeout: float = 120.0,):
+        """Initializes a openai api compatible vlm with the provided parameters and lazy-loads the openai library
+
+        Args:
+            model (str): The model to initialize
+            base_url (str): Server address including the "/v1" suffix. Defaults to "http://localhost:8000/v1".
+            api_key_env (str | None, optional): Name of the environment variable holding the api key. Defaults to None.
+            prompt (str, optional): Instruction sent along with the image. Defaults to DEFAULT_TITLE_PROMPT.
+            max_tokens (int, optional): Max tokens alowed to be generated for this task. Defaults to 256.
+            temperature (float, optional): A hyperparameter that controls the randomness and creativity of the model's text generation. Defaults to 0.0.
+            max_side (int, optional): The max height or width an image is allowed to have before it's downscaled. Defaults to 1500.
+            timeout (float, optional): Seconds to wait for a response before raising an error.. Defaults to 120.0.
+        """
+        
+        import os
+        from openai import OpenAI
+        
+        api_key = (os.environ.get(api_key_env, "") if api_key_env else "") or "EMPTY"
+        self.model = model
+        self.engine = f"{self.name}-{self.model}"
+        self._reader = OpenAI(base_url= base_url, api_key= api_key, timeout= timeout)
+        self.prompt = prompt
+        self.max_tokens = max_tokens
+        self.max_side = max_side
+        self.temprature = temperature
+    
     
     def extract(self, image : np.ndarray) -> ExtractionResult:
-        pass
-    
+        image = _resize_max_side(image, self.max_side)
+        
+        response = self._reader.chat.completions.create(
+            model = self.model,
+            messages = [
+                {
+                    'role': 'user',
+                    'content' : [
+                        {'type': 'text', 'text': self.prompt},
+                        {'type': 'image_url', 'image_url':{'url': _to_url(image)}}
+                    ],
+                }
+            ],
+            max_tokens= self.max_tokens,
+            temperature= self.temprature,
+            )
+        
+        choice = response.choices[0]
+        raw = choice.message.content or "" # incase it's None
+        
+        title = parse_title(raw)
+        if not title:
+            return self._empty("response_empty", raw_text = raw)
+
+        return ExtractionResult(
+            text=title,
+            confidence=None,
+            bbox=[],  # a VLM answers with text only; it has no boxes
+            engine=self.engine,
+            meta={"n_regions": 1, "raw": raw,},
+        )
+        
 class Qwen3VlMExtractor(BaseTextExtractor):
     def __init__(self):
         pass
